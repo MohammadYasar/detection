@@ -7,7 +7,8 @@ from lstm_sequence_nonpadded import needlePassing
 from experimental_setup import experimentalSetup
 from lstm_vaesuturing import lstmVAE
 from vae_keras import VAE
-
+from keras import backend as K
+K.tensorflow_backend._get_available_gpus()
 class vae_setup:
     def __init__(self, path, detection):
         self.data_path = path
@@ -40,7 +41,7 @@ class vae_setup:
         if self.detection =="0" or self.detection=="1":
             timesteps = 1
         else:
-            timesteps = 15
+            timesteps = 1#5
 
         self.task_path = os.path.join(self.files_path, self.task)
         self.task_setup = os.path.join(self.task_path, setup)
@@ -56,9 +57,12 @@ class vae_setup:
 
             super_outlength = 0
             for name in sorted(glob.glob(glob_path)):
-
                 data = self.exp.readIteration(name, trial, setup, train=0)
                 print ("trial name {} data shape {}".format(name.split("/")[-1], data.shape))
+                if trial == "OneTrialOut":
+                    data = data[0].reshape(1,-1)
+                    print ("reducing iterations for 50 to 1 for One Trial Out {}".format(data.shape))
+
                 data = self.sortData(data)
                 for i in range(len(data)):
                     x_train, y_train, x_test, y_test = data[i]
@@ -79,10 +83,14 @@ class vae_setup:
                 elif self.detection == "3":
                     print ("Running anomaly detection using LSTMAE and based on gestures")
                     self.lstmae.getCategorizedData(data, name.split("/")[-1]) #gsture specific
+
                 elif self.detection == "4":
                     print ("Running anomaly detection using LSTMAE concatenating feature vectors with gestures ")
                     self.lstmae.getInput(data, name.split("/")[-1], "concatenate") #all gestures
 
+                elif self.detection == "5":
+                    print ("Running anomaly detection using LSTMVAE concatenating feature vectors with gestures ")
+                    self.vae.getInput(data, "concatenate") #all gestures
 
     def readIteration(self, itr_path, trial, setup):
         """
@@ -190,18 +198,5 @@ except:
     print ("Error: missing parameters")
     print (usage)
     sys.exit(0)
-if mode == "0":
-    print ("Running anomaly detection using VAE on whole trajectory")
-    v_setup = vae_setup(path, mode)
-elif mode == "1":
-    print ("Running anomaly detection using VAE based on gestures")
-    v_setup = vae_setup(path, mode)
-elif mode == "2":
-    print ("Running anomaly detection using LSTMAE on whole trajectory")
-    v_setup = vae_setup(path, mode)
-elif mode == "3":
-    print ("Running anomaly detection using LSTMAE and based on gestures")
-    v_setup = vae_setup(path, mode)
-elif mode == "4":
-    print ("Running anomaly detection using LSTMAE concatenating feature vectors with gestures ")
-    v_setup = vae_setup(path, mode)
+
+v_setup = vae_setup(path, mode)
