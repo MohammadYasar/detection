@@ -13,7 +13,7 @@ class vae_setup:
     def __init__(self, path, detection):
         self.data_path = path
         self.files_path = os.path.join(self.data_path, "Experimental_setup")
-        self.task = "Suturing"#Needle_Passing"
+        self.task = "Suturing"#"Needle_Passing"
         self.detection = detection
         self.exp = experimentalSetup(path, task=self.task, run=1)
         self.lstmae = lstmVAE(path, self.task)
@@ -74,19 +74,19 @@ class vae_setup:
 
                 if self.detection == "1":
                     print ("Running anomaly detection using VAE and based on gestures")
-                    self.vae.getCategorizedData(data, name.split("/")[-1]) #gsture specific
+                    self.vae.getCategorizedData(self.exp.currentTimestamp, data, name.split("/")[-1]) #gsture specific
 
                 elif self.detection =="2":
                     print ("Running anomaly detection using LSTMAE on entire trajectory")
-                    self.lstmae.getInput(data, name.split("/")[-1]) #all gestures
+                    self.lstmae.getInput(self.exp.currentTimestamp, data, name.split("/")[-1]) #all gestures
 
                 elif self.detection == "3":
                     print ("Running anomaly detection using LSTMAE and based on gestures")
-                    self.lstmae.getCategorizedData(data, name.split("/")[-1]) #gsture specific
+                    self.lstmae.getCategorizedData(self.exp.currentTimestamp, data, name.split("/")[-1]) #gsture specific
 
                 elif self.detection == "4":
                     print ("Running anomaly detection using LSTMAE concatenating feature vectors with gestures ")
-                    self.lstmae.getInput(data, name.split("/")[-1], "concatenate") #all gestures
+                    self.lstmae.getInput(self.exp.currentTimestamp, data, name.split("/")[-1], "concatenate") #all gestures
 
                 elif self.detection == "5":
                     print ("Running anomaly detection using LSTMVAE concatenating feature vectors with gestures ")

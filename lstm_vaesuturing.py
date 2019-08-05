@@ -1,4 +1,4 @@
-import os, sys, glob, math, _pickle, time
+import os, sys, glob, math, _pickle, time, gc
 import matplotlib.pyplot as plt
 import pandas as pd
 import numpy as np
@@ -12,6 +12,9 @@ from keras.utils import plot_model
 from keras.layers import  LSTM, RepeatVector, TimeDistributed, Dropout, Masking, BatchNormalization, Input, Flatten, Dense
 from keras.callbacks import ModelCheckpoint, TensorBoard, EarlyStopping, CSVLogger
 from keras.preprocessing import sequence
+from keras.backend.tensorflow_backend import set_session
+from keras.backend.tensorflow_backend import clear_session
+from keras.backend.tensorflow_backend import get_session
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.metrics import confusion_matrix, precision_recall_curve
@@ -20,8 +23,10 @@ from sklearn.metrics import precision_recall_fscore_support, f1_score, mean_squa
 from sklearn.utils import class_weight
 from numpy.random import seed
 seed(1)
-from tensorflow import set_random_seed
 
+from tensorflow import set_random_seed
+from keras import backend as K
+K.tensorflow_backend._get_available_gpus()
 set_random_seed(2)
 
 SEED = 123 #used to help randomly select the data points
@@ -62,10 +67,32 @@ class lstmVAE:
         lstm_autoencoder.add(Dropout(rate=0.5, noise_shape=(None, None, encoder1)))
         lstm_autoencoder.add(TimeDistributed(Dense(n_features)))
 
-        lstm_autoencoder.summary()
+        #lstm_autoencoder.summary()
         adam = optimizers.Adam(lr)
         lstm_autoencoder.compile(loss='mse', optimizer=adam)
-        #plot_model(lstm_autoencoder, to_file="lstm_autoencoder.pdf", show_shapes=True, show_layer_names=True)
+
+        return lstm_autoencoder
+
+    def getModel_v2(self, timesteps, n_features, lr):
+        """
+        Sequence-to-sequence lstm-ae
+        """
+        encoder1 = 512*2
+        encoder2 = 256
+        encoder3 = 128
+        encoder4 = 64
+        lstm_autoencoder = Sequential()
+        # Encoder
+        lstm_autoencoder.add(LSTM(encoder1, activation='relu', input_shape=(timesteps, n_features), return_sequences=False))
+        lstm_autoencoder.add(RepeatVector(timesteps))
+        # Decoder
+        lstm_autoencoder.add(LSTM(encoder1, activation='relu', return_sequences=True))
+        lstm_autoencoder.add(Dropout(rate=0.5, noise_shape=(None, None, encoder1)))
+        lstm_autoencoder.add(TimeDistributed(Dense(n_features)))
+
+        #lstm_autoencoder.summary()
+        adam = optimizers.Adam(lr)
+        lstm_autoencoder.compile(loss='mse', optimizer=adam)
 
         return lstm_autoencoder
 
@@ -83,7 +110,7 @@ class lstmVAE:
         lstm_autoencoder.add(BatchNormalization(axis=-1, momentum=0.99, epsilon=0.001, center=True, scale=True))
         lstm_autoencoder.add(Dense(2, activation='softmax'))
 
-        lstm_autoencoder.summary()
+        #lstm_autoencoder.summary()
         adam = optimizers.Adam(lr)
         lstm_autoencoder.compile(loss='categorical_crossentropy', optimizer=adam, metrics=['accuracy'])
 
@@ -141,7 +168,7 @@ class lstmVAE:
 
             cp1 = EarlyStopping(monitor='val_loss', min_delta=0.0000, patience=10, verbose=0)
             cp2 = ModelCheckpoint(filepath="{}/clf_checkpoint.h5".format(checkpoint_path), save_best_only=True, verbose=0)
-            cp3 = CSVLogger(filename="{}/lstm_classifier_{}.csv".format(csvPath, itr_num), append=True, separator=';')
+            cp3 = CSVLogger(filename="{}/lstm_classifier_{}.csv".format(csvPath, itr_num), append=False, separator=';')
 
             lstm_autoencoder.reset_states()
             print (np.unique(y_train))
@@ -155,15 +182,17 @@ class lstmVAE:
             y_preds = lstm_autoencoder.predict(X_test_temp)
             f1 = f1_score(y_test.argmax(axis=1), y_preds.argmax(axis=1), average = 'weighted')
             print ("************** f1_score {} ***********".format(f1))
-        #tf.reset_default_graph()
-        #gc.collect()
+        tf.reset_default_graph()
+        gc.collect()
+        K.clear_session()
 
-    def trainModel(self, vae_data, trial="-1", itr_num=0, gesture="g", train=0):
+    def trainModel(self, currentTimestamp, vae_data, trial="-1", itr_num=0, gesture="g", train=0, mode="None"):
 
         figure_path = os.path.join(self.dataPath, self.task, "experiments", trial, "figures")
-        csv_path = os.path.join(self.dataPath, self.task, "experiments", trial, "csvs")
+        trainlog_path = os.path.join(self.dataPath, self.task, "experiments", trial, "csvs", "trainlog")
+        confmatrix_path = os.path.join(self.dataPath, self.task, "experiments", trial, "csvs", "confusion_matrix")
         checkpoint_path = os.path.join(self.dataPath, self.task, "experiments", trial, "checkpoints")
-        self.makePaths(figure_path, csv_path, checkpoint_path)
+        self.makePaths(figure_path, trainlog_path, confmatrix_path, checkpoint_path)
 
         X_train_y0_scaled, X_valid_y0_scaled, X_test_scaled, y_test = vae_data
 
@@ -174,18 +203,19 @@ class lstmVAE:
 
         if train==1:
 
-            lstm_autoencoder = self.getModel(timesteps, n_features, lr)
+            lstm_autoencoder = self.getModel_v2(timesteps, n_features, lr)
 
             cp1 = EarlyStopping(monitor='val_loss', min_delta=0.0000, patience=5, verbose=0)
-            cp2 = ModelCheckpoint(filepath="{}/vae_checkpoint{}gesture{}.h5".format(checkpoint_path, itr_num, gesture), save_best_only=True, verbose=0)
-            cp3 = CSVLogger(filename="{}/lstm_model_{}gesture{}.csv".format(csv_path, itr_num, gesture), append=True, separator=';')
+            cp2 = ModelCheckpoint(filepath="{}/lstmae_checkpoint_ts{}_{}gesture{}{}.h5".format(checkpoint_path, currentTimestamp, itr_num, gesture,  mode), save_best_only=True, verbose=0)
+            cp3 = CSVLogger(filename="{}/lstm_mode_ts{}_{}gesture{}{}.csv".format(trainlog_path, currentTimestamp, itr_num, gesture,  mode), append=False, separator=';')
+            plot_model(lstm_autoencoder, to_file="{}/lstmae_model_ts{}_{}gesture{}{}.pdf".format(figure_path, currentTimestamp, itr_num, gesture,  mode), show_shapes=True, show_layer_names=True)
 
             lstm_autoencoder.reset_states()
 
             lstm_autoencoder_history = lstm_autoencoder.fit(X_train_y0_scaled, X_train_y0_scaled, epochs=epochs, batch_size=32,
                                                                     verbose=0, callbacks=[cp1,cp2,cp3], validation_data=(X_valid_y0_scaled, X_valid_y0_scaled)).history
 
-        lstm_autoencoder = load_model("{}/vae_checkpoint{}gesture{}.h5".format(checkpoint_path, itr_num, gesture))
+        lstm_autoencoder = load_model("{}/lstmae_checkpoint_ts{}_{}gesture{}{}.h5".format(checkpoint_path, currentTimestamp, itr_num, gesture,  mode))
 
         X_test_temp = X_test_scaled.copy()
         X_test_temp = np.asarray(X_test_temp)#.reshape(-1, X_valid_scaled[2], X_valid_scaled[3])
@@ -212,24 +242,24 @@ class lstmVAE:
         plt.title("Reconstruction error for different classes")
         plt.ylabel("Reconstruction error")
         plt.xlabel("Data point index")
-        plt.savefig("{}/separation{}gesture{}.pdf".format(figure_path, itr_num, gesture))
+        plt.savefig("{}/separation_ts{}_{}gesture{}{}.pdf".format(figure_path, currentTimestamp, itr_num, gesture,  mode))
         plt.close()
         pred_y = [1 if e > threshold_fixed else 0 for e in error_df.Reconstruction_error.values]
 
         conf_matrix = confusion_matrix(error_df.True_class, pred_y)
         conf_matrixdf = pd.DataFrame(data=conf_matrix)
-        conf_matrixdf.to_csv("{}/conf{}gesture{}.csv".format(csv_path, itr_num, gesture))
+        conf_matrixdf.to_csv("{}/conf_ts{}_{}gesture{}{}.csv".format(figure_path, currentTimestamp, itr_num, gesture,  mode))
         plt.figure(figsize=(12, 12))
         sns.heatmap(conf_matrix, xticklabels=LABELS, yticklabels=LABELS, annot=True, fmt="d");
         plt.title("Confusion matrix")
         plt.ylabel('True class')
         plt.xlabel('Predicted class')
-        plt.savefig("{}/confusion_matrix{}gesture{}.pdf".format(figure_path, itr_num, gesture))
+        plt.savefig("{}/confusion_matrix_ts{}_{}gesture{}{}.pdf".format(figure_path, currentTimestamp, itr_num, gesture,  mode))
         plt.close()
 
         false_pos_rate, true_pos_rate, thresholds = roc_curve(error_df.True_class, error_df.Reconstruction_error)
         roc_auc = auc(false_pos_rate, true_pos_rate,)
-        plt.plot(false_pos_rate, true_pos_rate, linewidth=5, label='AUC = %0.3f'% roc_auc)
+        plt.plot(false_pos_rate, true_pos_rate, linewidth=5, label='ROC = %0.3f'% roc_auc)
         plt.plot([0,1],[0,1], linewidth=5)
         plt.xlim([-0.01, 1])
         plt.ylim([0, 1.01])
@@ -237,8 +267,13 @@ class lstmVAE:
         plt.title('Receiver operating characteristic curve (ROC)')
         plt.ylabel('True Positive Rate')
         plt.xlabel('False Positive Rate')
-        plt.savefig("{}/auc{}gesture{}.pdf".format(figure_path, itr_num, gesture))
+        plt.savefig("{}/auc_ts{}_{}gesture{}{}.pdf".format(figure_path, currentTimestamp, itr_num, gesture,  mode))
         plt.close()
+
+        K.clear_session()
+        tf.reset_default_graph()
+        gc.collect()
+
         return lstm_autoencoder
 
 
@@ -275,12 +310,12 @@ class lstmVAE:
         assert sum_length == segments.shape[0]
         return
 
-    def getInput(self, data, trial, mode="not_concatenate"):
+    def getInput(self, currentTimestamp, data, trial, mode="not_concatenate"):
         """
         gets input from another class, segments according to the error and then segments according to the gesture
         """
         #print ("entered")
-
+        flag = mode
         for i in range(data.shape[0]):
             self.dumpDemonstrations(data[i])
             x_train, y_train, x_test, y_test = data[i]
@@ -296,10 +331,10 @@ class lstmVAE:
             nonanomalous_trajectory, anomalous_trajectory, nonanomalous_label, anomalous_label = self.distinguishSequence(x_train, y_train)
             X_train_y0_scaled, X_valid_y0_scaled, _, _ =self.splitdata(nonanomalous_trajectory, nonanomalous_label)
             print ("X_train shape {}".format(X_train_y0_scaled.shape))
-            #x_test = np.concatenate((x_test, anomalous_trajectory), axis=0)
-            #y_test = np.concatenate((y_test, anomalous_label), axis=0)
+            x_test = np.concatenate((x_test, anomalous_trajectory), axis=0)
+            y_test = np.concatenate((y_test, anomalous_label), axis=0)
             vae_data = [X_train_y0_scaled, X_valid_y0_scaled, x_test, y_test]
-            self.trainModel(vae_data, trial, itr_num = i, train=1)
+            self.trainModel(currentTimestamp, vae_data, trial, itr_num = i, train=1, mode=flag)
 
 
             x_train, x_valid, y_train, y_valid = self.splitdata(x_train, y_train)
@@ -307,7 +342,7 @@ class lstmVAE:
             clf_data = [x_train, x_valid, y_train, y_valid, x_test, y_test]
             #self.trainClassifier(clf_data, itr_num = i, train=1)
 
-    def getCategorizedData(self, data, trial):
+    def getCategorizedData(self, currentTimestamp, data, trial, mode="not_concatenate"):
         """
         gets input from another class, segments according to the error and then segments according to the gesture
         """
@@ -332,7 +367,7 @@ class lstmVAE:
                     testlabel_dict[key] = np.concatenate((testlabel_dict[key], anomalous_label), axis=0)
                     vae_data = [gestureX_train_y0_scaled, gestureX_valid_y0_scaled, testgesture_dict[key], testlabel_dict[key]]
 
-                    self.trainModel(vae_data, trial, itr_num = i, gesture=key, train=1)
+                    self.trainModel(currentTimestamp, vae_data, trial, itr_num = i, gesture=key, train=1, mode=mode)
 
                     x_train, x_valid, y_train, y_valid = self.splitdata(x_train, y_train)
                     y_train, y_valid, y_test = self.vectorizeLabels(y_train, y_valid, y_test)
@@ -362,7 +397,7 @@ class lstmVAE:
         """
         data received will be categorized into gestures before passing to the LSTM-VAE
         """
-        print ("kinematics {} gestures {}".format(kinematics.shape, gestures.shape))
+        #print ("kinematics {} gestures {}".format(kinematics.shape, gestures.shape))
         gestures_dict = dict()
         labels_dict = dict()
         sum_length = 0
@@ -379,12 +414,15 @@ class lstmVAE:
 
         return gestures_dict, labels_dict
 
-    def makePaths(self, figure_path, csv_path, checkpoint_path):
+    def makePaths(self, figure_path, trainlog_path, confmatrix_path, checkpoint_path):
         """
         This function makes paths for saving model progress, figures and checkpoins
         """
-        if not os.path.exists(csv_path):
-            os.makedirs(csv_path)
+        if not os.path.exists(trainlog_path):
+            os.makedirs(trainlog_path)
+
+        if not os.path.exists(confmatrix_path):
+            os.makedirs(confmatrix_path)
 
         if not os.path.exists(figure_path):
             os.makedirs(figure_path)
